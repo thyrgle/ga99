@@ -1,0 +1,22 @@
+[package]
+name = "ga99"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[build]
+rustflags = ["-C", "target-cpu=native"]
+
+[profile.release]
+codegen-units = 1
+lto = false
+debug = true
+
+[dependencies]
+rayon = "1.10.0"
+rand = "0.8.5"
+rand_core = "0.6.4"
+mimalloc = "0.1.41"
+index-set = "0.1.0"
+rand_xoshiro = "0.6.0"
