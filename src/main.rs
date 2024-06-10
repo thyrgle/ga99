@@ -133,12 +133,12 @@ fn improve_pair<const N: usize>(
     rng: &mut Xoshiro256StarStar) -> ((usize, usize), bool) {
     let choice0 = (rng.next_u64() % (N as u64)) as usize;
     let choice1 = (rng.next_u64() % (N as u64)) as usize;
-    if rng.next_u64() % 2 == 1 {
-        g.add_edge(choice0, choice1);
-        ((choice0, choice1), true)
-    } else {
+    if g.contains_edge(choice0, choice1) {
         g.remove_edge(choice0, choice1);
         ((choice0, choice1), false)
+    } else {
+        g.add_edge(choice0, choice1);
+        ((choice0, choice1), true)
     }
 }
 
@@ -147,10 +147,11 @@ fn improve_pair<const N: usize>(
 fn gnp<const N: usize>(p: f32) -> Graph<N> {
     // Although there may be room for parallelization, this function is only
     // called once and takes a negligible time in the long run.
+    let mut rng = Xoshiro256StarStar::seed_from_u64(12345); 
     let mut g = Graph::<N>::new();
     for i in 0..N {
         for j in i+1..N {
-            if rand::random::<f32>() < p {
+            if ((rng.next_u64() % 100) as f32 / 100.0) < p {
                 g.add_edge(i, j);
             }
         }
@@ -184,12 +185,16 @@ fn main() {
     let mut prev_fitness: usize = 0;
     let mut fitness = 1;
     let mut penalty_factor = 0.5;
-    const COOLING_FACTOR: f32 = 2.0;
-    const HEATING_FACTOR: f32 = 0.0005;
-    const PENALTY_UPPER: f32 = 2.0;
+    let mut skip_score = false;
+    const COOLING_FACTOR: f32 = 5.0;
+    const HEATING_FACTOR: f32 = 0.01;
+    const PENALTY_UPPER: f32 = 10.0;
     // While the perfect graph has not been found.
     while fitness > 0 {
-        fitness = score(&g);
+        if !skip_score {
+            fitness = score(&g);
+            skip_score = true;
+        }
         // Randomly add/remove edges in hopes of improving the graph.
         let (choice, add_or_del) = improve_pair(&mut g, &mut rng);
         let new_score = score(&g);
@@ -197,25 +202,22 @@ fn main() {
         if best_fitness > fitness {
             best_fitness = fitness;
             println!("Fit {fitness:?} Penalty {penalty_factor:?}");
-            // A great solution has been found! Reset the penalty factor.
         }
-        // Add a slowly increasing penalty factor that "heats up" when no
         // Add a slowly increasing penalty factor that "heats up" when no
         // improvement has been found and "cools down" when a better solution
         // has been found.
         // Make sure penalty never goes negative, and keep it small (i.e. <= 3)
         if prev_fitness == fitness  {
-            penalty_factor = f32::min(
-                penalty_factor + HEATING_FACTOR, PENALTY_UPPER);
+            penalty_factor = f32::min(penalty_factor + HEATING_FACTOR, PENALTY_UPPER);
         } else {
-            penalty_factor = f32::max(penalty_factor 
-                                      - COOLING_FACTOR, 0.0);
+            penalty_factor = f32::max(penalty_factor - COOLING_FACTOR, 0.0);
         }
         // Check if the improvement was actually bad, and if so, revert the 
         // graph
         prev_fitness = fitness;
         if new_score > fitness + penalty_factor as usize {
             revert(&mut g, choice, add_or_del);
+            skip_score = false;
         }
     }
     println!("serialized = {:?}", g.adj);
