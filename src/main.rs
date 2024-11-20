@@ -16,20 +16,17 @@
 /// variant. To see more about simulated annealing see:
 /// https://en.wikipedia.org/wiki/Simulated_annealing
 
-use core::array::from_fn;
 use rayon::prelude::*;
 use rand_xoshiro::rand_core::SeedableRng;
 use rand_xoshiro::Xoshiro256StarStar;
 use rand::RngCore;
-use index_set::set::IntersectionIndices;
-use index_set::IndexSet;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// Datastructure used to represent the graph.
 struct Graph<const N: usize> {
-    adj: [IndexSet<usize>; N]
+    adj: [u128; N]
 }
 
 
@@ -37,11 +34,7 @@ impl<const N: usize> Graph<N> {
 
     /// Initializes a graph with no edges and vertices.
     fn new() -> Self {
-        let mut g: [IndexSet<usize>; N] 
-            = from_fn(|_| IndexSet::<usize>::default());
-        for entry in g.iter_mut() {
-            *entry = IndexSet::<usize>::default();
-        }
+        let g: [u128; N] = [0; N];
         Self {
             adj: g
         }
@@ -51,31 +44,31 @@ impl<const N: usize> Graph<N> {
     #[inline(always)]
     fn add_edge(&mut self, i: usize, j: usize) {
         let to_add = &mut self.adj;
-        to_add[i].insert_index(j);
-        to_add[j].insert_index(i);
+        to_add[i] |= 1 << j;
+        to_add[j] |= 1 << i;
     }
     
     /// Removes the edge {i, j}.
     #[inline(always)]
     fn remove_edge(&mut self, i: usize, j: usize) {
         let to_del = &mut self.adj;
-        to_del[i].remove_index(j);
-        to_del[j].remove_index(i);
+        to_del[i] &= !(1 << j);
+        to_del[j] &= !(1 << i);
     }
     
     /// Checks if {i, j} is an edge in the graph.
     #[inline(always)]
     fn contains_edge(&self, i: usize, j: usize) -> bool {
         let to_check = &self.adj;
-        to_check[i].contains_index(j)
+        (to_check[i] & (1 << j)) > 0
     }
     
     /// Retrieves the common neighbors that two vertices have.
     #[inline(always)]
     fn common_neighbors(&self, i: usize, j: usize) 
-        -> IntersectionIndices<'_, usize> {
+        -> u128 {
         let adj = &self.adj;
-        adj[i].intersection_indices(&adj[j])
+        adj[i] & adj[j]
     }
 }
 
@@ -97,14 +90,10 @@ fn score<const N: usize>(g: &Graph<N>) -> usize {
         .map(|i| {
             let mut bad_count = 0;
             for j in i+1..N {
-                let count = g.common_neighbors(i, j).count();
+                let count = g.common_neighbors(i, j).count_ones();
                 let c = count as i32;
-                if g.contains_edge(i, j) {
-                    bad_count += ((c - 1) * (c - 1)) as usize
-                    // Should have two neighbors in common.
-                } else {
-                    bad_count += ((c - 2) * (c - 2)) as usize
-                }
+                let e = g.contains_edge(j, i) as i32;
+                bad_count += ((c - (2 - e)) * (c - (2 - e))) as usize
             }
             bad_count
         }).sum()
@@ -112,14 +101,10 @@ fn score<const N: usize>(g: &Graph<N>) -> usize {
     let mut bad_count = 0;
     for i in 0..N {
         for j in i+1..N {
-            let count = g.common_neighbors(i, j).count();
-            // Should have one neighbor in common.
-            if g.contains_edge(i, j) {
-                bad_count += ((count as i32 - 1) * (count as i32 - 1)) as usize
-                // Should have two neighbors in common.
-            } else {
-                bad_count += ((count as i32 - 2) * (count as i32 - 2)) as usize
-            }
+            let count = g.common_neighbors(i, j).count_ones();
+            let c = count as i32;
+            let e = g.contains_edge(i, j) as i32;
+            bad_count += ((c - (2 - e)) * (c - (2 - e))) as usize;
         }
     }
     bad_count
