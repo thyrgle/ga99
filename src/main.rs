@@ -48,12 +48,11 @@ impl<const N: usize> Graph<N> {
         to_add[j] |= 1 << i;
     }
     
-    /// Removes the edge {i, j}.
     #[inline(always)]
-    fn remove_edge(&mut self, i: usize, j: usize) {
-        let to_del = &mut self.adj;
-        to_del[i] &= !(1 << j);
-        to_del[j] &= !(1 << i);
+    fn flip_edge(&mut self, i: usize, j: usize) {
+        let to_flip = &mut self.adj;
+        to_flip[i] ^= 1 << j;
+        to_flip[j] ^= 1 << i;
     }
     
     /// Checks if {i, j} is an edge in the graph.
@@ -86,6 +85,7 @@ impl<const N: usize> Graph<N> {
 #[inline(always)]
 fn score<const N: usize>(g: &Graph<N>) -> usize {
     // Check all pairs of vertices in parallel.
+    /*
     (0..N).into_par_iter()
         .map(|i| {
             let mut bad_count = 0;
@@ -97,7 +97,7 @@ fn score<const N: usize>(g: &Graph<N>) -> usize {
             }
             bad_count
         }).sum()
-    /*
+    */
     let mut bad_count = 0;
     for i in 0..N {
         for j in i+1..N {
@@ -108,23 +108,17 @@ fn score<const N: usize>(g: &Graph<N>) -> usize {
         }
     }
     bad_count
-    */
 }
 
 /// Randomly add/remove edge.
 #[inline(always)]
 fn improve_pair<const N: usize>(
     g: &mut Graph<N>, 
-    rng: &mut Xoshiro256StarStar) -> ((usize, usize), bool) {
+    rng: &mut Xoshiro256StarStar) -> (usize, usize) {
     let choice0 = (rng.next_u64() % (N as u64)) as usize;
     let choice1 = (rng.next_u64() % (N as u64)) as usize;
-    if g.contains_edge(choice0, choice1) {
-        g.remove_edge(choice0, choice1);
-        ((choice0, choice1), false)
-    } else {
-        g.add_edge(choice0, choice1);
-        ((choice0, choice1), true)
-    }
+    g.flip_edge(choice0, choice1);
+    (choice0, choice1)
 }
 
 /// Create an G(n, p) graph, that is a graph that has n vertices and edges are
@@ -148,15 +142,10 @@ fn gnp<const N: usize>(p: f32) -> Graph<N> {
 /// removing/adding the edge.
 #[inline(always)]
 fn revert<const N:usize>(g: &mut Graph<N>, 
-                         pair: (usize, usize),
-                         add_or_del: bool) {
+                         pair: (usize, usize)) {
     // False indicates add, true indicates delete the edge.
     let (fst, snd) = pair;
-    if add_or_del {
-        g.remove_edge(fst, snd);
-    } else {
-        g.add_edge(fst, snd);
-    }
+    g.flip_edge(fst, snd);
 }
 
 fn main() {
@@ -181,7 +170,7 @@ fn main() {
             skip_score = true;
         }
         // Randomly add/remove edges in hopes of improving the graph.
-        let (choice, add_or_del) = improve_pair(&mut g, &mut rng);
+        let choice = improve_pair(&mut g, &mut rng);
         let new_score = score(&g);
         // Keep track of the best fitness found so far.
         if best_fitness > fitness {
@@ -201,7 +190,7 @@ fn main() {
         // graph
         prev_fitness = fitness;
         if new_score > fitness + penalty_factor as usize {
-            revert(&mut g, choice, add_or_del);
+            revert(&mut g, choice);
             skip_score = false;
         }
     }
