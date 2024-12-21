@@ -166,7 +166,7 @@ fn main() -> io::Result<()> {
                 const HEATING_FACTOR: f32 = 0.01;
                 const PENALTY_UPPER: f32 = 10.0;
                 // While the perfect graph has not been found.
-                while fitness >= best_fitness && now.elapsed().as_secs() < 5 {
+                while fitness >= best_fitness && now.elapsed().as_secs() < 120 {
                     if !skip_score {
                         fitness = score(&g);
                         skip_score = true;
