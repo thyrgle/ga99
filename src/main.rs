@@ -16,15 +16,14 @@
 /// variant. To see more about simulated annealing see:
 /// https://en.wikipedia.org/wiki/Simulated_annealing
 
-use rayon::prelude::*;
-use rand_xoshiro::rand_core::SeedableRng;
-use rand_xoshiro::Xoshiro256StarStar;
-use rand::RngCore;
+use std::{io, thread};
+use std::time::Instant;
 
 #[global_allocator]
 static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// Datastructure used to represent the graph.
+#[derive(Clone)]
 struct Graph<const N: usize> {
     adj: [u128; N]
 }
@@ -72,16 +71,19 @@ impl<const N: usize> Graph<N> {
 }
 
 /// Computes the score/fitness of the graph.
-/// The ideal fitness is a value of 0, and the way it is scored is as follows:
-/// If {i,j} is an edge, then i and j are neighbors, so they should be contained
-/// in a unique triangle. Thus, they should have 1 neighbor in common.
+/// The ideal fitness is a value of 0, and the way it is scored is as 
+/// follows:
+/// If {i,j} is an edge, then i and j are neighbors, so they should be 
+/// contained in a unique triangle. Thus, they should have 1 neighbor in 
+/// common.
 /// Thus, 
-/// If {i,j} is not an edge, then i and j are not neighbors, so they should be
-/// contained in a unique square. Thus, they should have 2 neighbors in common.
+/// If {i,j} is not an edge, then i and j are not neighbors, so they 
+/// should be contained in a unique square. Thus, they should have 2 
+/// neighbors in common.
 ///
 /// Thus, the penalty is either (neighbors in common - 1)^2 or 
-/// (neighbors in common - 2)^2 to see how far away from the correct number of
-/// neighbors in common the two vertices really are.
+/// (neighbors in common - 2)^2 to see how far away from the correct 
+/// number of neighbors in common the two vertices really are.
 #[inline(always)]
 fn score<const N: usize>(g: &Graph<N>) -> usize {
     // Check all pairs of vertices in parallel.
@@ -113,24 +115,22 @@ fn score<const N: usize>(g: &Graph<N>) -> usize {
 /// Randomly add/remove edge.
 #[inline(always)]
 fn improve_pair<const N: usize>(
-    g: &mut Graph<N>, 
-    rng: &mut Xoshiro256StarStar) -> (usize, usize) {
-    let choice0 = (rng.next_u64() % (N as u64)) as usize;
-    let choice1 = (rng.next_u64() % (N as u64)) as usize;
+    g: &mut Graph<N>) -> (usize, usize) {
+    let choice0 = rand::random::<usize>() % N;
+    let choice1 = rand::random::<usize>() % N;
     g.flip_edge(choice0, choice1);
     (choice0, choice1)
 }
 
-/// Create an G(n, p) graph, that is a graph that has n vertices and edges are
-/// added to the graph with probability p.
+/// Create an G(n, p) graph, that is a graph that has n vertices and edges
+/// are added to the graph with probability p.
 fn gnp<const N: usize>(p: f32) -> Graph<N> {
     // Although there may be room for parallelization, this function is only
     // called once and takes a negligible time in the long run.
-    let mut rng = Xoshiro256StarStar::seed_from_u64(12345); 
     let mut g = Graph::<N>::new();
     for i in 0..N {
         for j in i+1..N {
-            if ((rng.next_u64() % 100) as f32 / 100.0) < p {
+            if rand::random::<f32>() < p {
                 g.add_edge(i, j);
             }
         }
@@ -138,8 +138,8 @@ fn gnp<const N: usize>(p: f32) -> Graph<N> {
     g
 }
 
-/// Called when the edge added/removed from improve_pair was bad, revert it by
-/// removing/adding the edge.
+/// Called when the edge added/removed from improve_pair was bad, revert 
+/// it by removing/adding the edge.
 #[inline(always)]
 fn revert<const N:usize>(g: &mut Graph<N>, 
                          pair: (usize, usize)) {
@@ -148,51 +148,80 @@ fn revert<const N:usize>(g: &mut Graph<N>,
     g.flip_edge(fst, snd);
 }
 
-fn main() {
-    let mut rng = Xoshiro256StarStar::seed_from_u64(12345);
-    // Number of vertices in the graph.
+fn main() -> io::Result<()> {
     const N: usize = 99;
-    let mut g = gnp::<N>(14.0/99.0);
-    // Higher fitness is worse, make a trivial upperbound that is essentially
-    // infinity.
-    let mut best_fitness: usize = 10000000;
-    let mut prev_fitness: usize = 0;
-    let mut fitness = 1;
-    let mut penalty_factor = 0.5;
-    let mut skip_score = false;
-    const COOLING_FACTOR: f32 = 5.0;
-    const HEATING_FACTOR: f32 = 0.01;
-    const PENALTY_UPPER: f32 = 10.0;
-    // While the perfect graph has not been found.
-    while fitness > 0 {
-        if !skip_score {
-            fitness = score(&g);
-            skip_score = true;
+    let mut best_graph = gnp::<N>(14.0/99.0);
+    let mut best_fitness = usize::MAX;
+    while best_fitness > 0 {
+        let mut handlers = Vec::new();
+        for _ in 0..thread::available_parallelism()?.get() {
+            let mut g = best_graph.clone();
+            handlers.push(thread::spawn(move || {
+                let now = Instant::now();
+                let mut prev_fitness: usize = 0;
+                let mut fitness = usize::MAX;
+                let mut penalty_factor = 0.5;
+                let mut skip_score = false;
+                const COOLING_FACTOR: f32 = 5.0;
+                const HEATING_FACTOR: f32 = 0.01;
+                const PENALTY_UPPER: f32 = 10.0;
+                // While the perfect graph has not been found.
+                while fitness >= best_fitness && now.elapsed().as_secs() < 5 {
+                    if !skip_score {
+                        fitness = score(&g);
+                        skip_score = true;
+                    }
+                    // Randomly add/remove edges in hopes of improving the
+                    // graph.
+                    let choice = improve_pair(&mut g);
+                    let new_score = score(&g);
+                    // Keep track of the best fitness found so far.
+                    if best_fitness > fitness {
+                        best_fitness = fitness;
+                    }
+                    // Add a slowly increasing penalty factor that "heats
+                    // up" when no improvement has been found and "cools
+                    // down" when a better solution has been found.
+                    // Make sure penalty never goes negative, and keep it
+                    // small (i.e. <= 10).
+                    if prev_fitness == fitness  {
+                        penalty_factor = f32::min(
+                            penalty_factor + HEATING_FACTOR, PENALTY_UPPER
+                        );
+                    } else {
+                        penalty_factor = f32::max(
+                            penalty_factor - COOLING_FACTOR, 0.0
+                        );
+                    }
+                    // Check if the improvement was actually bad, and if 
+                    // so, revert the graph
+                    prev_fitness = fitness;
+                    if new_score > fitness + penalty_factor as usize {
+                        revert(&mut g, choice);
+                        skip_score = false;
+                    }
+                }
+                (g, fitness)
+            }));
         }
-        // Randomly add/remove edges in hopes of improving the graph.
-        let choice = improve_pair(&mut g, &mut rng);
-        let new_score = score(&g);
-        // Keep track of the best fitness found so far.
-        if best_fitness > fitness {
-            best_fitness = fitness;
-            println!("Fit {fitness:?} Penalty {penalty_factor:?}");
+        let mut best_graphs: Vec<(Graph<N>, usize)> = Vec::new();
+        for handler in handlers {
+            best_graphs.push(handler.join().unwrap());
         }
-        // Add a slowly increasing penalty factor that "heats up" when no
-        // improvement has been found and "cools down" when a better solution
-        // has been found.
-        // Make sure penalty never goes negative, and keep it small (i.e. <= 3)
-        if prev_fitness == fitness  {
-            penalty_factor = f32::min(penalty_factor + HEATING_FACTOR, PENALTY_UPPER);
-        } else {
-            penalty_factor = f32::max(penalty_factor - COOLING_FACTOR, 0.0);
+        let mut new_fit = usize::MAX;
+        for (g, fit) in best_graphs {
+            println!("{fit:?}");
+            if fit < new_fit {
+                best_graph = g;
+                new_fit = fit;
+            }
         }
-        // Check if the improvement was actually bad, and if so, revert the 
-        // graph
-        prev_fitness = fitness;
-        if new_score > fitness + penalty_factor as usize {
-            revert(&mut g, choice);
-            skip_score = false;
+        if new_fit < best_fitness {
+            best_fitness = new_fit;
         }
+        println!("Fit {best_fitness:?}");
     }
-    println!("serialized = {:?}", g.adj);
+
+    println!("serialized = {:?}", best_graph.adj);
+    Ok(())
 }
