@@ -162,9 +162,9 @@ fn main() -> io::Result<()> {
                 let mut fitness = usize::MAX;
                 let mut penalty_factor = 0.5;
                 let mut skip_score = false;
-                const COOLING_FACTOR: f32 = 5.0;
-                const HEATING_FACTOR: f32 = 0.01;
-                const PENALTY_UPPER: f32 = 10.0;
+                const COOLING_FACTOR: f32 = 1.0;
+                const HEATING_FACTOR: f32 = 0.001;
+                //const PENALTY_UPPER: f32 = 1000.0;
                 // While the perfect graph has not been found.
                 while fitness >= best_fitness && now.elapsed().as_secs() < 120 {
                     if !skip_score {
@@ -185,9 +185,7 @@ fn main() -> io::Result<()> {
                     // Make sure penalty never goes negative, and keep it
                     // small (i.e. <= 10).
                     if prev_fitness == fitness  {
-                        penalty_factor = f32::min(
-                            penalty_factor + HEATING_FACTOR, PENALTY_UPPER
-                        );
+                        penalty_factor = penalty_factor + HEATING_FACTOR;
                     } else {
                         penalty_factor = f32::max(
                             penalty_factor - COOLING_FACTOR, 0.0
@@ -196,7 +194,7 @@ fn main() -> io::Result<()> {
                     // Check if the improvement was actually bad, and if 
                     // so, revert the graph
                     prev_fitness = fitness;
-                    if new_score > fitness + penalty_factor as usize {
+                    if new_score > best_fitness + penalty_factor as usize {
                         revert(&mut g, choice);
                         skip_score = false;
                     }
